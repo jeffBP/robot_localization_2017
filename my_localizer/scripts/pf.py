@@ -219,7 +219,13 @@ class ParticleFilter:
                       particle cloud around.  If this input is ommitted, the odometry will be used """
         if xy_theta == None:
             xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
+
         self.particle_cloud = []
+        for i in xrange(self.n_particles):
+            x = np.random.normal(xy_theta[0], .25)
+            y = np.random.normal(xy_theta[1], .25)
+            theta = np.random.normal(xy_theta[2], np.pi/6)
+            self.particle_cloud.append(Particle(x, y, theta))
         # TODO create particles
 
         self.normalize_particles()
@@ -227,7 +233,8 @@ class ParticleFilter:
 
     def normalize_particles(self):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
-        pass
+        for i, p in enumerate(self.particle_cloud):
+            self.particle_cloud[i].w = i/len(self.particle_cloud)
         # TODO: implement this
 
     def publish_particles(self, msg):
