@@ -8,6 +8,7 @@ from std_msgs.msg import Header, String
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, Pose, Point, Quaternion
 from nav_msgs.srv import GetMap
+from nav_msgs.msg import OccupancyGrid
 from copy import deepcopy
 
 import tf
@@ -94,6 +95,8 @@ class ParticleFilter:
 
         self.laser_max_distance = 2.0   # maximum penalty to assess in the likelihood field model
 
+        self.particle_pos_std = .25     # standard deviation for gaussian partical position distribution (meters)
+        self.particle_angle_std = np.pi/6 # standard deviation for guassian particle angle  distribution (radians)
         # TODO: define additional constants if needed
 
         # Setup pubs and subs
@@ -115,12 +118,23 @@ class ParticleFilter:
         self.current_odom_xy_theta = []
 
         # request the map from the map server, the map should be of type nav_msgs/OccupancyGrid
-        # TODO: fill in the appropriate service call here.  The resultant map should be assigned be passed
-        #       into the init method for OccupancyField
+        self.map = None
+        self.get_map_client()
 
         # for now we have commented out the occupancy field initialization until you can successfully fetch the map
         #self.occupancy_field = OccupancyField(map)
         self.initialized = True
+
+    def get_map_client(self):
+        print("Getting Map")
+        rospy.wait_for_service('static_map')
+        try:
+            get_map = rospy.ServiceProxy('static_map', GetMap)
+            recieved_map = get_map()
+            self.map = OccupancyField(recieved_map.map)
+            print("We have the map.")
+        except rospy.ServiceException, e:
+            print("Map couldn't be retrieved.")
 
     def update_robot_pose(self):
         """ Update the estimate of the robot's pose given the updated particles.
@@ -173,11 +187,29 @@ class ParticleFilter:
         # make sure the distribution is normalized
         self.normalize_particles()
         # TODO: fill out the rest of the implementation
+        self.particle_cloud = self.draw_random_sample(self.particle_cloud, [p.w for p in self.particle_cloud], len(self.particle_cloud))
+
 
     def update_particles_with_laser(self, msg):
         """ Updates the particle weights in response to the scan contained in the msg """
         # TODO: implement this
-        pass
+        print("particles updated.")
+        min_distance = min([d for d in msg.ranges if d]) #minimum of all nonzero points
+        for i, p in enumerate(self.particle_cloud):
+            minimum = self.map.get_closest_obstacle_distance(p.x,p.y)
+            error = abs(minimum - min_distance)
+            if error:
+                self.particle_cloud[i].w = 1/error
+            else:
+                self.particle_cloud[i].w = 10
+
+        # for p in self.particle_cloud:
+        #     errors.append(self.map.get_closest_obstacle_distance(p.x,p.y))
+        # for i, error in enumerate(errors):
+        #     if error:
+        #         self.particle_cloud[i].w = 1/error
+        #     else:
+        #         self.particle_cloud[i].w = 0
 
     @staticmethod
     def weighted_values(values, probabilities, size):
@@ -222,12 +254,10 @@ class ParticleFilter:
 
         self.particle_cloud = []
         for i in xrange(self.n_particles):
-            x = np.random.normal(xy_theta[0], .25)
-            y = np.random.normal(xy_theta[1], .25)
-            theta = np.random.normal(xy_theta[2], np.pi/6)
+            x = np.random.normal(xy_theta[0], self.particle_pos_std)
+            y = np.random.normal(xy_theta[1], self.particle_pos_std)
+            theta = np.random.normal(xy_theta[2], self.particle_angle_std)
             self.particle_cloud.append(Particle(x, y, theta))
-        # TODO create particles
-
         self.normalize_particles()
         self.update_robot_pose()
 
@@ -287,6 +317,7 @@ class ParticleFilter:
         elif (math.fabs(new_odom_xy_theta[0] - self.current_odom_xy_theta[0]) > self.d_thresh or
               math.fabs(new_odom_xy_theta[1] - self.current_odom_xy_theta[1]) > self.d_thresh or
               math.fabs(new_odom_xy_theta[2] - self.current_odom_xy_theta[2]) > self.a_thresh):
+            print("Doing an update.")
             # we have moved far enough to do an update!
             self.update_particles_with_odom(msg)    # update based on odometry
             self.update_particles_with_laser(msg)   # update based on laser scan
