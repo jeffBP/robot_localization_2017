@@ -44,18 +44,34 @@ class Particle(object):
             x: the x-coordinate of the hypothesis relative to the map frame
             y: the y-coordinate of the hypothesis relative ot the map frame
             theta: the yaw of the hypothesis relative to the map frame
-            w: the particle weight (the class does not ensure that particle weights are normalized """ 
+            w: the particle weight (the class does not ensure that particle weights are normalized """
         self.w = w
         self.theta = theta
         self.x = x
         self.y = y
+
+    def projectScan(self, scanList):
+        projection = []
+        for i, dist in enumerate(scanList):
+            if dist:
+                newAngle = (math.degrees(self.theta) + i % 360)
+                projX, projY = self.getXY(newAngle, dist)
+                projection.append((projX+self.x, projY+self.y))
+        return projection
+
+
+    @staticmethod
+    def getXY(theta, r):
+        x = r*math.cos(math.radians(theta))
+        y = r*math.sin(math.radians(theta))
+        return x, y
 
     def as_pose(self):
         """ A helper function to convert a particle to a geometry_msgs/Pose message """
         orientation_tuple = tf.transformations.quaternion_from_euler(0,0,self.theta)
         return Pose(position=Point(x=self.x,y=self.y,z=0), orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
 
-    # TODO: define additional helper functions if needed
+        # TODO: define additional helper functions if needed
 
 class ParticleFilter:
     """ The class that represents a Particle Filter ROS Node
@@ -86,7 +102,7 @@ class ParticleFilter:
         self.base_frame = "base_link"   # the frame of the robot base
         self.map_frame = "map"          # the name of the map coordinate frame
         self.odom_frame = "odom"        # the name of the odometry coordinate frame
-        self.scan_topic = "scan"        # the topic where we will get laser scans from 
+        self.scan_topic = "scan"        # the topic where we will get laser scans from
 
         self.n_particles = 300          # the number of particles to use
 
@@ -125,6 +141,8 @@ class ParticleFilter:
         #self.occupancy_field = OccupancyField(map)
         self.initialized = True
 
+
+
     def get_map_client(self):
         print("Getting Map")
         rospy.wait_for_service('static_map')
@@ -147,7 +165,17 @@ class ParticleFilter:
 
         # TODO: assign the lastest pose into self.robot_pose as a geometry_msgs.Pose object
         # just to get started we will fix the robot's pose to always be at the origin
-        self.robot_pose = Pose()
+        xSum = 0
+        ySum = 0
+        thetaSum = 0
+        for i, pt in enumerate(self.particle_cloud):
+            xSum += pt.x*pt.w
+            ySum += pt.y*pt.w
+            thetaSum += pt.theta*pt.w
+        orientation_tuple = tf.transformations.quaternion_from_euler(0,0,thetaSum)
+        self.robot_pose = Pose(position=Point(x=xSum, y=ySum, z=0), orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
+
+
 
     def update_particles_with_odom(self, msg):
         """ Update the particles using the newly given odometry pose.
@@ -172,11 +200,17 @@ class ParticleFilter:
 
         # TODO: modify particles using delta
         # For added difficulty: Implement sample_motion_odometry (Prob Rob p 136)
+        for i, pt in enumerate(self.particle_cloud):
+            pt.x += delta[0]
+            pt.y += delta[1]
+            pt.theta += delta[2]
+
 
     def map_calc_range(self,x,y,theta):
         """ Difficulty Level 3: implement a ray tracing likelihood model... Let me know if you are interested """
         # TODO: nothing unless you want to try this alternate likelihood model
         pass
+
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -196,12 +230,18 @@ class ParticleFilter:
         print("particles updated.")
         min_distance = min([d for d in msg.ranges if d]) #minimum of all nonzero points
         for i, p in enumerate(self.particle_cloud):
-            minimum = self.map.get_closest_obstacle_distance(p.x,p.y)
-            error = abs(minimum - min_distance)
-            if error:
-                self.particle_cloud[i].w = 1/error
+            errorSum = 0
+            projection = p.projectScan(msg.ranges)
+            for i, pt in enumerate(projection):
+                minimum = self.map.get_closest_obstacle_distance(pt[0],pt[1])
+                error = abs(minimum - min_distance)
+                errorSum += error
+            if errorSum:
+                self.particle_cloud[i].w = 1/errorSum
             else:
                 self.particle_cloud[i].w = 10
+
+
 
         # for p in self.particle_cloud:
         #     errors.append(self.map.get_closest_obstacle_distance(p.x,p.y))
@@ -210,6 +250,7 @@ class ParticleFilter:
         #         self.particle_cloud[i].w = 1/error
         #     else:
         #         self.particle_cloud[i].w = 0
+
 
     @staticmethod
     def weighted_values(values, probabilities, size):
@@ -328,7 +369,7 @@ class ParticleFilter:
         self.publish_particles(msg)
 
     def fix_map_to_odom_transform(self, msg):
-        """ This method constantly updates the offset of the map and 
+        """ This method constantly updates the offset of the map and
             odometry coordinate systems based on the latest results from
             the localizer
             TODO: if you want to learn a lot about tf, reimplement this... I can provide
