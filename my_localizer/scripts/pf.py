@@ -113,6 +113,9 @@ class ParticleFilter:
 
         self.particle_pos_std = .25     # standard deviation for gaussian partical position distribution (meters)
         self.particle_angle_std = np.pi/6 # standard deviation for guassian particle angle  distribution (radians)
+
+        self.pos_update_std = .04        # standard deviation for updating each particle's location
+        self.angle_update_std = np.pi/15# standard deviation for updating each particle's angle
         # TODO: define additional constants if needed
 
         # Setup pubs and subs
@@ -173,7 +176,8 @@ class ParticleFilter:
             ySum += pt.y*pt.w
             thetaSum += pt.theta*pt.w
         orientation_tuple = tf.transformations.quaternion_from_euler(0,0,thetaSum)
-        self.robot_pose = Pose(position=Point(x=xSum, y=ySum, z=0), orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
+        self.robot_pose = Pose(position=Point(x=xSum, y=ySum, z=0), 
+                orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
 
 
 
@@ -201,9 +205,9 @@ class ParticleFilter:
         # TODO: modify particles using delta
         # For added difficulty: Implement sample_motion_odometry (Prob Rob p 136)
         for i, pt in enumerate(self.particle_cloud):
-            pt.x += delta[0]
-            pt.y += delta[1]
-            pt.theta += delta[2]
+            pt.x += np.random.normal(delta[0], self.pos_update_std)
+            pt.y += np.random.normal(delta[1], self.pos_update_std)
+            pt.theta += np.random.normal(delta[2], self.angle_update_std)
 
 
     def map_calc_range(self,x,y,theta):
@@ -228,18 +232,18 @@ class ParticleFilter:
         """ Updates the particle weights in response to the scan contained in the msg """
         # TODO: implement this
         print("particles updated.")
-        min_distance = min([d for d in msg.ranges if d]) #minimum of all nonzero points
+        #min_distance = min([d for d in msg.ranges if d]) #minimum of all nonzero points
         for i, p in enumerate(self.particle_cloud):
             errorSum = 0
             projection = p.projectScan(msg.ranges)
             for i, pt in enumerate(projection):
-                minimum = self.map.get_closest_obstacle_distance(pt[0],pt[1])
-                error = abs(minimum - min_distance)
-                errorSum += error
+                # minimum = self.map.get_closest_obstacle_distance(pt[0],pt[1])
+                # error = abs(minimum - min_distance)
+                errorSum += self.map.get_closest_obstacle_distance(pt[0],pt[1])
             if errorSum:
-                self.particle_cloud[i].w = 1/errorSum
+                self.particle_cloud[i].w = 1/(errorSum)**2
             else:
-                self.particle_cloud[i].w = 10
+                self.particle_cloud[i].w = 100
 
 
 
