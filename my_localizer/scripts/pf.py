@@ -112,10 +112,10 @@ class ParticleFilter:
         self.laser_max_distance = 2.0   # maximum penalty to assess in the likelihood field model
 
         self.particle_pos_std = .25     # standard deviation for gaussian partical position distribution (meters)
-        self.particle_angle_std = np.pi/6 # standard deviation for guassian particle angle  distribution (radians)
+        self.particle_angle_std = np.pi/8 # standard deviation for guassian particle angle  distribution (radians)
 
         self.pos_update_std = .04        # standard deviation for updating each particle's location
-        self.angle_update_std = np.pi/15# standard deviation for updating each particle's angle
+        self.angle_update_std = np.pi/10# standard deviation for updating each particle's angle
         # TODO: define additional constants if needed
 
         # Setup pubs and subs
@@ -215,9 +215,10 @@ class ParticleFilter:
 
         # TODO: modify particles using delta
         # For added difficulty: Implement sample_motion_odometry (Prob Rob p 136)
+        d = math.hypot(delta[0], delta[1])
         for i, pt in enumerate(self.particle_cloud):
-            pt.x += np.random.normal(delta[0], self.pos_update_std)
-            pt.y += np.random.normal(delta[1], self.pos_update_std)
+            pt.x += np.random.normal(d*math.cos(pt.theta), self.pos_update_std)
+            pt.y += np.random.normal(d*math.sin(pt.theta), self.pos_update_std)
             pt.theta += np.random.normal(delta[2], self.angle_update_std)
 
 
@@ -252,9 +253,10 @@ class ParticleFilter:
                 # error = abs(minimum - min_distance)
                 errorSum += self.map.get_closest_obstacle_distance(pt[0],pt[1])
             if errorSum:
-                self.particle_cloud[i].w = 1/(errorSum)**2
+                self.particle_cloud[i].w = 50/(errorSum)
             else:
                 self.particle_cloud[i].w = 100
+            print(errorSum)
 
 
 
