@@ -103,15 +103,15 @@ class ParticleFilter:
         self.map_frame = "map"          # the name of the map coordinate frame
         self.odom_frame = "odom"        # the name of the odometry coordinate frame
         self.scan_topic = "scan"        # the topic where we will get laser scans from
-
-        self.n_particles = 300          # the number of particles to use
+        self.kP = 0.5
+        self.n_particles = 100          # the number of particles to use
 
         self.d_thresh = 0.2             # the amount of linear movement before performing an update
         self.a_thresh = math.pi/6       # the amount of angular movement before performing an update
 
         self.laser_max_distance = 2.0   # maximum penalty to assess in the likelihood field model
 
-        self.particle_pos_std = .25     # standard deviation for gaussian partical position distribution (meters)
+        self.particle_pos_std = .025     # standard deviation for gaussian partical position distribution (meters)
         self.particle_angle_std = np.pi/8 # standard deviation for guassian particle angle  distribution (radians)
 
         self.pos_update_std = .04        # standard deviation for updating each particle's location
@@ -179,12 +179,14 @@ class ParticleFilter:
         xSum = 0
         ySum = 0
         thetaSum = 0
+        average_x_dir = np.mean([pt.w*np.cos(pt.theta) for pt in self.particle_cloud])
+        average_y_dir = np.mean([pt.w*np.sin(pt.theta) for pt in self.particle_cloud])
+        thetaSum = math.atan2(average_y_dir, average_x_dir)
         for i, pt in enumerate(self.particle_cloud):
             xSum += pt.x*pt.w
             ySum += pt.y*pt.w
-            thetaSum += pt.theta*pt.w
         orientation_tuple = tf.transformations.quaternion_from_euler(0,0,thetaSum)
-        self.robot_pose = Pose(position=Point(x=xSum, y=ySum, z=0), 
+        self.robot_pose = Pose(position=Point(x=xSum, y=ySum, z=0),
                 orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
 
 
@@ -213,13 +215,19 @@ class ParticleFilter:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
 
+
         # TODO: modify particles using delta
         # For added difficulty: Implement sample_motion_odometry (Prob Rob p 136)
+        r1 = math.atan2(delta[1], delta[0]) - self.current_odom_xy_theta[2]
         d = math.hypot(delta[0], delta[1])
+        r2 = delta[2] - r1
         for i, pt in enumerate(self.particle_cloud):
-            pt.x += np.random.normal(d*math.cos(pt.theta), self.pos_update_std)
-            pt.y += np.random.normal(d*math.sin(pt.theta), self.pos_update_std)
-            pt.theta += np.random.normal(delta[2], self.angle_update_std)
+
+            pt.theta += np.random.normal(r1, self.angle_update_std)
+            dist = np.random.normal(d, self.particle_pos_std)
+            pt.x += dist*math.cos(pt.theta)
+            pt.y += dist*math.sin(pt.theta)
+            pt.theta += np.random.normal(r2, self.angle_update_std)
 
 
     def map_calc_range(self,x,y,theta):
@@ -246,17 +254,18 @@ class ParticleFilter:
         print("particles updated.")
         #min_distance = min([d for d in msg.ranges if d]) #minimum of all nonzero points
         for i, p in enumerate(self.particle_cloud):
-            errorSum = 0
+            hits = 0
             projection = p.projectScan(msg.ranges)
-            for i, pt in enumerate(projection):
+            for pt in projection:
                 # minimum = self.map.get_closest_obstacle_distance(pt[0],pt[1])
                 # error = abs(minimum - min_distance)
-                errorSum += self.map.get_closest_obstacle_distance(pt[0],pt[1])
-            if errorSum:
-                self.particle_cloud[i].w = 50/(errorSum)
+                 if self.map.get_closest_obstacle_distance(pt[0],pt[1]) < 0.05:
+                     hits += 1
+            print(hits)
+            if hits:
+                p.w = hits
             else:
-                self.particle_cloud[i].w = 100
-            print(errorSum)
+                p.w = .6
 
 
 
@@ -313,7 +322,7 @@ class ParticleFilter:
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
         total_weight = sum([p.w for p in self.particle_cloud])
         for i, p in enumerate(self.particle_cloud):
-            self.particle_cloud[i].w = p.w/total_weight
+            self.particle_cloud[i].w = p.w/float(total_weight)
 
     def publish_particles(self, msg):
         particles_conv = []
