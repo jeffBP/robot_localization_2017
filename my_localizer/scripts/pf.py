@@ -51,19 +51,40 @@ class Particle(object):
         self.y = y
 
     def projectScan(self, scanList):
+        """
+        Project LIDAR scan onto particle
+        scanList: LIDAR ranges
+        projection: list of x, y coordinates of LIDAR scan ranges on top
+        of particle
+        """
         projection = []
+
         for i, dist in enumerate(scanList):
+            #Loop through LIDAR scan
             if dist:
+                #If scan exists
+
+                #Add angle of scan to angle of particle, modulo 360 to re-standardize
                 newAngle = (math.degrees(self.theta) + i % 360)
+
+                #get x and y position of LIDAR scan at angle newAngle
                 projX, projY = self.getXY(newAngle, dist)
+
+                #Add x and y to projection list
                 projection.append((projX+self.x, projY+self.y))
+
         return projection
 
 
     @staticmethod
     def getXY(theta, r):
-        x = r*math.cos(math.radians(theta))
-        y = r*math.sin(math.radians(theta))
+        """
+        Converts polar to cartesian
+        theta: angle from origin
+        r: distance from origin
+        """
+        x = r*math.cos(math.radians(theta)) #x = rcos(theta)
+        y = r*math.sin(math.radians(theta)) #y = rsin(theta)
         return x, y
 
     def as_pose(self):
@@ -71,7 +92,6 @@ class Particle(object):
         orientation_tuple = tf.transformations.quaternion_from_euler(0,0,self.theta)
         return Pose(position=Point(x=self.x,y=self.y,z=0), orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
 
-        # TODO: define additional helper functions if needed
 
 class ParticleFilter:
     """ The class that represents a Particle Filter ROS Node
@@ -155,14 +175,24 @@ class ParticleFilter:
 
 
     def get_map_client(self):
+        """
+        Gets the map from map_server
+        """
         print("Getting Map")
-        rospy.wait_for_service('static_map')
+        rospy.wait_for_service('static_map')  #Waits for map on topic static_map
         try:
+            #try to get map
             get_map = rospy.ServiceProxy('static_map', GetMap)
+
+            #store map
             recieved_map = get_map()
+
+            #store occupancy field
             self.map = OccupancyField(recieved_map.map)
+
             print("We have the map.")
         except rospy.ServiceException, e:
+            #If map doesn't exist
             print("Map couldn't be retrieved.")
 
     def update_robot_pose(self):
@@ -179,12 +209,19 @@ class ParticleFilter:
         xSum = 0
         ySum = 0
         thetaSum = 0
+
+        #Average unit vector for x, y coordinates
         average_x_dir = np.mean([pt.w*np.cos(pt.theta) for pt in self.particle_cloud])
         average_y_dir = np.mean([pt.w*np.sin(pt.theta) for pt in self.particle_cloud])
+        #find angle of average unit vector
         thetaSum = math.atan2(average_y_dir, average_x_dir)
+
         for i, pt in enumerate(self.particle_cloud):
+            #average x and y positions of particles
             xSum += pt.x*pt.w
             ySum += pt.y*pt.w
+
+        #change robot pose to average angle and position
         orientation_tuple = tf.transformations.quaternion_from_euler(0,0,thetaSum)
         self.robot_pose = Pose(position=Point(x=xSum, y=ySum, z=0),
                 orientation=Quaternion(x=orientation_tuple[0], y=orientation_tuple[1], z=orientation_tuple[2], w=orientation_tuple[3]))
@@ -192,6 +229,11 @@ class ParticleFilter:
 
 
     def projected_scan_received(self, msg):
+        """
+        Store LIDAR scan
+        msg: LIDAR ranges
+        """
+
         self.last_projected_stable_scan = msg
 
     def update_particles_with_odom(self, msg):
@@ -216,17 +258,30 @@ class ParticleFilter:
             return
 
 
-        # TODO: modify particles using delta
-        # For added difficulty: Implement sample_motion_odometry (Prob Rob p 136)
+        #Assume robot rotates, moves forward, then rotates again
+        #Calculate first rotation angle
         r1 = math.atan2(delta[1], delta[0]) - self.current_odom_xy_theta[2]
-        d = math.hypot(delta[0], delta[1])
-        r2 = delta[2] - r1
-        for i, pt in enumerate(self.particle_cloud):
 
+        #calculate distance of movement
+        d = math.hypot(delta[0], delta[1])
+
+        #calculate second rotation angle
+        r2 = delta[2] - r1
+
+        for i, pt in enumerate(self.particle_cloud):
+            #Change each particle's coordinates
+
+            #Update particle angle with r1
             pt.theta += np.random.normal(r1, self.angle_update_std)
+
+            #Add noise to distance moved
             dist = np.random.normal(d, self.particle_pos_std)
+
+            #Adjust x and y for distance moved
             pt.x += dist*math.cos(pt.theta)
             pt.y += dist*math.sin(pt.theta)
+
+            #Update particle angle with r2
             pt.theta += np.random.normal(r2, self.angle_update_std)
 
 
@@ -242,40 +297,33 @@ class ParticleFilter:
             particle is selected in the resampling step.  You may want to make use of the given helper
             function draw_random_sample.
         """
-        # make sure the distribution is normalized
+        #Make sure the distribution is normalized
         self.normalize_particles()
-        # TODO: fill out the rest of the implementation
+        #Get random sample of particles
         self.particle_cloud = self.draw_random_sample(self.particle_cloud, [p.w for p in self.particle_cloud], len(self.particle_cloud))
 
 
     def update_particles_with_laser(self, msg):
         """ Updates the particle weights in response to the scan contained in the msg """
-        # TODO: implement this
         print("particles updated.")
         #min_distance = min([d for d in msg.ranges if d]) #minimum of all nonzero points
         for i, p in enumerate(self.particle_cloud):
+            #Loop through particles
             hits = 0
-            projection = p.projectScan(msg.ranges)
+            projection = p.projectScan(msg.ranges) #Project LIDAR Scan onto particle
+
             for pt in projection:
-                # minimum = self.map.get_closest_obstacle_distance(pt[0],pt[1])
-                # error = abs(minimum - min_distance)
+                #If point is within a certain distance from the wall
                  if self.map.get_closest_obstacle_distance(pt[0],pt[1]) < 0.05:
+                     #Increment hits
                      hits += 1
             print(hits)
             if hits:
+                #If hits exists, set the weight of particle equal to it
                 p.w = hits
             else:
+                #If hits doesn't exist, set it's weight
                 p.w = .6
-
-
-
-        # for p in self.particle_cloud:
-        #     errors.append(self.map.get_closest_obstacle_distance(p.x,p.y))
-        # for i, error in enumerate(errors):
-        #     if error:
-        #         self.particle_cloud[i].w = 1/error
-        #     else:
-        #         self.particle_cloud[i].w = 0
 
 
     @staticmethod
@@ -306,15 +354,26 @@ class ParticleFilter:
             Arguments
             xy_theta: a triple consisting of the mean x, y, and theta (yaw) to initialize the
                       particle cloud around.  If this input is ommitted, the odometry will be used """
+
+
         if xy_theta == None:
             xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
 
         self.particle_cloud = []
+
         for i in xrange(self.n_particles):
+            #Create n_particles number of particles
+
+            #Set x, y, theta of particle to sample from normal distribution
+            #around robot
             x = np.random.normal(xy_theta[0], self.particle_pos_std)
             y = np.random.normal(xy_theta[1], self.particle_pos_std)
             theta = np.random.normal(xy_theta[2], self.particle_angle_std)
+
+            #Add particle to the list
             self.particle_cloud.append(Particle(x, y, theta))
+
+        #Normalize particles and update robot position
         self.normalize_particles()
         self.update_robot_pose()
 
@@ -325,6 +384,10 @@ class ParticleFilter:
             self.particle_cloud[i].w = p.w/float(total_weight)
 
     def publish_particles(self, msg):
+        """
+        Publishes particles as array of Poses
+        for visualization in rviz
+        """
         particles_conv = []
         for p in self.particle_cloud:
             particles_conv.append(p.as_pose())
